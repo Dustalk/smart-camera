@@ -73,7 +73,9 @@ src/
 ├── useCamera.ts           getUserMedia + MediaStream 管理
 ├── useLocalDetector.ts    ONNX 推論ループ (document.hidden でポーズ)
 ├── yolo11.ts              モデルの前処理・後処理 (letterbox + score threshold)
-├── localTracker.ts        IoU ベースの sticky instance_id
+├── localTracker.ts        ByteTrack 風トラッカー (速度予測で枠を補間)
+├── detector.worker.ts     DEIMv2 推論を回す Web Worker
+├── detectorConfig.ts      モデル URL / スコア閾値 (main と worker で共有)
 ├── captureSnapshot.ts     フレーム/切り抜きの JPEG 化 (長辺 720px, quality 0.8)
 ├── coords.ts              box_2d ↔ 正規化 xyxy の変換
 ├── live/

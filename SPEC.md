@@ -35,7 +35,7 @@
 | サーバ | Vercel Serverless Function (`/api/refine-items`, `/api/live-token`, `/api/log`) |
 | カメラ | `getUserMedia` (`facingMode: 'environment'`) |
 | 描画 | `<video>` + `<canvas>` オーバーレイ (Canvas 2D) |
-| 物体追跡 | IoU ベース sticky `instance_id` (`LocalTracker`) |
+| 物体追跡 | ByteTrack 風 2 段マッチ + alpha-beta 速度予測、描画毎フレーム外挿 (`LocalTracker`)。推論は Web Worker (`detector.worker.ts`) |
 | 状態管理 | React state |
 | デプロイ | Vercel (静的 SPA + Serverless API) |
 
@@ -127,7 +127,7 @@
 ## 既知の割り切り
 
 - 詳細化 (`/api/refine-items`) はキャンセル不可 (フロントから fetch を中断する手段は実装していない)
-- LocalTracker は IoU ベースで 1.5 秒の GC、見失って再登場した物体は別 `instance_id` になる (= カートに重複追加され得る)
+- LocalTracker は予測位置との IoU で照合し 3 秒の GC。3 秒以上見失った物体や、予測から大きく外れて再登場した物体は別 `instance_id` になる (= カートに重複追加され得る)
 - カメラを速く動かすと YOLO の検出が安定しないので、撮影中はゆっくり動かす案内を継続
 - Vercel リクエストボディは 4.5MB 上限。30 個 × ~80KB ≈ 2.4MB を想定 (720px / quality 0.8)、十分余裕
 - 1 セッション 1 確定。連続スキャンは「最初から」で戻る
