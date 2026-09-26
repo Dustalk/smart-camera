@@ -30,12 +30,12 @@
 |---|---|
 | フロント | React 19 + Vite + TypeScript |
 | ローカル推論 | DEIMv2-N INT8 ONNX @640² (ラベル非表示), `onnxruntime-web` WASM 単スレ |
-| 詳細化 | `gemini-3.7-flash` (`@google/genai`, multimodal) |
-| 音声トークモード | `gemini-3.1-flash-live-preview` (Gemini Live, native audio + 1fps 映像) |
+| 詳細化 | `gemini-3.8-flash` (`@google/genai`, multimodal) |
+| 音声トークモード | `gemini-3.8-live` (Gemini Live, native audio + 1fps 映像) |
 | サーバ | Vercel Serverless Function (`/api/refine-items`, `/api/live-token`, `/api/log`) |
 | カメラ | `getUserMedia` (`facingMode: 'environment'`) |
 | 描画 | `<video>` + `<canvas>` オーバーレイ (Canvas 2D) |
-| 物体追跡 | IoU ベース sticky `instance_id` (`LocalTracker`) |
+| 物体追跡 | ByteTrack 風 2 段マッチ + alpha-beta 速度予測、描画毎フレーム外挿 (`LocalTracker`)。推論は Web Worker (`detector.worker.ts`) |
 | 状態管理 | React state |
 | デプロイ | Vercel (静的 SPA + Serverless API) |
 
@@ -58,9 +58,9 @@
 | 切り抜きマージン | box 幅/高さの 18% (各辺、フレーム内クランプ) |
 | 音声 box_2d 規約 | `[ymin, xmin, ymax, xmax]`、フレーム全体を 0-1000 とする正規化整数 (Gemini ネイティブ形式) |
 | 選択上限 | 30 個 (タップ + 音声の合算) |
-| Gemini モデル (詳細化) | `gemini-3.7-flash` → fallback `gemini-3.6-flash` (`GEMINI_MODEL` / `GEMINI_FALLBACK_MODEL`) |
+| Gemini モデル (詳細化) | `gemini-3.8-flash` → fallback `gemini-3.6-flash` (`GEMINI_MODEL` / `GEMINI_FALLBACK_MODEL`) |
 | Gemini thinking | `low` を明示 (`GEMINI_THINKING_LEVEL`、`auto` で未指定に戻せる) |
-| Gemini モデル (音声) | `gemini-3.1-flash-live-preview` → fallback `gemini-2.5-flash-native-audio-preview-12-2025` |
+| Gemini モデル (音声) | `gemini-3.8-live` → fallback `gemini-2.5-flash-native-audio-preview-12-2025` |
 | Live フレーム送信 | 1 fps、長辺 720px JPEG (`frameIntervalMs`) |
 | Vercel Function `maxDuration` | refine-items 60 秒 / live-token 15 秒 / log 10 秒 |
 
@@ -127,14 +127,17 @@
 ## 既知の割り切り
 
 - 詳細化 (`/api/refine-items`) はキャンセル不可 (フロントから fetch を中断する手段は実装していない)
-- LocalTracker は IoU ベースで 1.5 秒の GC、見失って再登場した物体は別 `instance_id` になる (= カートに重複追加され得る)
+- LocalTracker は予測位置との IoU で照合し 3 秒の GC。3 秒以上見失った物体や、予測から大きく外れて再登場した物体は別 `instance_id` になる (= カートに重複追加され得る)
 - カメラを速く動かすと YOLO の検出が安定しないので、撮影中はゆっくり動かす案内を継続
 - Vercel リクエストボディは 4.5MB 上限。30 個 × ~80KB ≈ 2.4MB を想定 (720px / quality 0.8)、十分余裕
 - 1 セッション 1 確定。連続スキャンは「最初から」で戻る
 
 ## コスト目安
 
-単価は `gemini-3.7-flash` の導入価格 **$0.75 / $3.75 per Mtok**（2026-12-31 まで。2027-01-01 に倍）。
+単価は `gemini-3.8-flash` の導入価格 **$0.75 / $3.75 per Mtok**（2026-12-31 まで。2027-01-01 に倍）。3.6 / 3.7 Flash と同額。
+
+> ⚠ 2026-09-26 に詳細化を `3.7-flash` → `3.8-flash`、音声を `3.1-flash-live-preview` → `3.8-live` へ移行したが、**移行時は実測していない**。
+> 以下のトークン数・レイテンシはすべて移行前のモデルでの値。単価は同じなので、差が出るとすればトークン量（特に思考トークン）の違いだけ。
 
 ### 詳細化 `/api/refine-items`（2026-08-15 実測）
 
@@ -162,7 +165,7 @@
 
 ### 音声トークモード `/api/live-token`（試算）
 
-`gemini-3.1-flash-live-preview`。映像 1fps は **258 tok/frame**（既定解像度）で text/image レート
+`gemini-3.8-live`（試算は 3.1-flash-live-preview 時点のもの。単価は同額）。映像 1fps は **258 tok/frame**（既定解像度）で text/image レート
 $0.75/Mtok、音声は分単価（入力 $0.005/分・出力 $0.018/分）。
 
 | 内訳 | 1 分あたり |

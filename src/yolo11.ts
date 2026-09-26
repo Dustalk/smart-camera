@@ -1,5 +1,6 @@
 import * as ort from 'onnxruntime-web/wasm';
 import type { LiveBox } from './types';
+import { LOW_SCORE_FLOOR } from './detectorConfig';
 
 // DEIMv2-N: a DETR-family detector with the HGNetv2 backbone, trained on
 // COCO. 3.6M params, ~4.4MB INT8, Apache 2.0 licensed. End-to-end ONNX —
@@ -29,15 +30,6 @@ const GENERIC_LABEL = '物体';
 // across the batch — already sorted by score descending. We just iterate
 // until scores drop below threshold.
 const MAX_QUERIES = 300;
-// Bias for recall: false positives are silently ignored (user just doesn't
-// tap), but missed objects can't be selected. `?conf=N` overrides.
-const SCORE_THRESHOLD = (() => {
-  if (typeof window === 'undefined') return 0.25;
-  const p = new URLSearchParams(window.location.search).get('conf');
-  const n = p ? Number(p) : NaN;
-  return Number.isFinite(n) && n > 0 && n < 1 ? n : 0.25;
-})();
-
 let session: ort.InferenceSession | null = null;
 let activeBackend: 'wasm' | null = null;
 
@@ -51,26 +43,15 @@ ort.env.wasm.wasmPaths =
   'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.24.3/dist/';
 ort.env.wasm.numThreads = 1;
 
-// Trial #6 (iOS ceiling probe): `?model=s` loads DEIMv2-S (DINOv3 ViT-Tiny,
-// 9.7M params, COCO AP 50.9, ~11.8MB INT8) instead of the default N (3.6M,
-// AP 43.0, 4.4MB). Lets us A/B both on the same device without a redeploy —
-// we're measuring whether the ~12MB S model loads and runs without iOS
-// Safari memory-pressure kills, and whether its bboxes are visibly better.
-// Same I/O (images + orig_target_sizes → labels/boxes/scores) and same
-// /255 letterbox preprocess, so it's a pure modelUrl swap.
-function pickModelUrl(): string {
-  const variant =
-    typeof window === 'undefined'
-      ? 'n'
-      : new URLSearchParams(window.location.search).get('model');
-  return variant === 's'
-    ? '/models/deimv2_s_640_uint8.onnx'
-    : '/models/deimv2_n_640_uint8.onnx';
-}
+let scoreFloor = LOW_SCORE_FLOOR;
 
-export async function loadModel(): Promise<{ backend: 'wasm' }> {
+export async function loadModel(opts: {
+  modelUrl: string;
+  scoreThreshold: number;
+}): Promise<{ backend: 'wasm' }> {
   if (session && activeBackend) return { backend: activeBackend };
-  const modelUrl = pickModelUrl();
+  scoreFloor = Math.min(LOW_SCORE_FLOOR, opts.scoreThreshold);
+  const modelUrl = opts.modelUrl;
   session = await ort.InferenceSession.create(modelUrl, {
     executionProviders: ['wasm'],
     graphOptimizationLevel: 'all',
@@ -87,19 +68,17 @@ type LetterboxMeta = {
   padY: number;
 };
 
-let scratchCtx: CanvasRenderingContext2D | null = null;
+// OffscreenCanvas so preprocessing works inside the detector worker.
+let scratchCtx: OffscreenCanvasRenderingContext2D | null = null;
 
-function preprocess(
-  video: HTMLVideoElement,
-  scratch: HTMLCanvasElement,
-): LetterboxMeta {
-  const vw = video.videoWidth;
-  const vh = video.videoHeight;
+function preprocess(frame: ImageBitmap): LetterboxMeta {
+  const vw = frame.width;
+  const vh = frame.height;
 
-  if (!scratchCtx || scratchCtx.canvas !== scratch) {
-    scratch.width = INPUT_SIZE;
-    scratch.height = INPUT_SIZE;
-    scratchCtx = scratch.getContext('2d', { willReadFrequently: true })!;
+  if (!scratchCtx) {
+    scratchCtx = new OffscreenCanvas(INPUT_SIZE, INPUT_SIZE).getContext('2d', {
+      willReadFrequently: true,
+    })!;
   }
   const ctx = scratchCtx;
 
@@ -111,7 +90,7 @@ function preprocess(
 
   ctx.fillStyle = 'rgb(114, 114, 114)';
   ctx.fillRect(0, 0, INPUT_SIZE, INPUT_SIZE);
-  ctx.drawImage(video, padX, padY, dw, dh);
+  ctx.drawImage(frame, padX, padY, dw, dh);
 
   const data = ctx.getImageData(0, 0, INPUT_SIZE, INPUT_SIZE).data;
   const stride = INPUT_SIZE * INPUT_SIZE;
@@ -126,9 +105,7 @@ function preprocess(
 
 // Diagnostic counters from the last postprocess pass — exposed to the
 // debug overlay.
-export let lastMaxScore = 0;
-export let lastRawCount = 0;
-export let lastKeptCount = 0;
+export const lastStats = { maxScore: 0, rawCount: 0, keptCount: 0 };
 
 // DEIMv2 deploy-mode outputs are already postprocessed: scores sorted
 // descending across the batch's queries, boxes in input-image pixel space
@@ -141,14 +118,14 @@ function postprocess(
 ): LiveBox[] {
   const out: LiveBox[] = [];
   const n = Math.min(scores.length, MAX_QUERIES);
-  lastMaxScore = n > 0 ? scores[0] : 0;
+  lastStats.maxScore = n > 0 ? scores[0] : 0;
   let raw = 0;
 
   for (let i = 0; i < n; i++) {
     const score = scores[i];
-    if (score >= SCORE_THRESHOLD) raw++;
-    // Scores are descending — bail as soon as we drop below threshold.
-    if (score < SCORE_THRESHOLD) break;
+    // Scores are descending — bail as soon as we drop below the floor.
+    if (score < scoreFloor) break;
+    raw++;
 
     const lx1 = boxes[i * 4 + 0];
     const ly1 = boxes[i * 4 + 1];
@@ -172,19 +149,16 @@ function postprocess(
     });
   }
 
-  lastRawCount = raw;
-  lastKeptCount = out.length;
+  lastStats.rawCount = raw;
+  lastStats.keptCount = out.length;
   return out;
 }
 
-export async function detect(
-  video: HTMLVideoElement,
-  scratch: HTMLCanvasElement,
-): Promise<LiveBox[]> {
+export async function detect(frame: ImageBitmap): Promise<LiveBox[]> {
   if (!session) throw new Error('Model not loaded');
-  if (!video.videoWidth) return [];
+  if (!frame.width) return [];
 
-  const meta = preprocess(video, scratch);
+  const meta = preprocess(frame);
   const images = new ort.Tensor('float32', inputBuffer, [
     1,
     3,

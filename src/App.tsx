@@ -341,8 +341,15 @@ export default function App() {
           {cameraError && <div className="error">{cameraError}</div>}
           {DEBUG && (
             <div className="debug">
-              <div>backend: {detectorBackend ?? '—'}</div>
-              <div>infs: {detectorStats.inferences}</div>
+              <div>
+                backend: {detectorBackend ?? '—'} model:{' '}
+                {detectorStats.model || '—'}
+              </div>
+              <div>
+                infs: {detectorStats.inferences} fps:{' '}
+                {detectorStats.fps.toFixed(1)} infer:{' '}
+                {Math.round(detectorStats.inferMs)}ms
+              </div>
               <div>
                 maxScore: {detectorStats.maxScore.toFixed(3)} raw:{' '}
                 {detectorStats.rawCount} kept: {detectorStats.keptCount}

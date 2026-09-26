@@ -245,6 +245,34 @@ Gemini 3.7 への移行に合わせて再サーベイ（web 調査のみ、実�
 
 **結論: 2026-08-15 時点でも DEIMv2-N を置き換える候補はない。維持。** 次に見るタイミングは (a) DEIMv2 か EdgeCrafter が nano 帯の重みを出す、(b) onnxruntime の iOS WebGPU 問題に**実際の修正 PR** が入る、のいずれか。
 
+## 2026-09-25 定点調査 + 構成改善（トラッカー / Worker）
+
+モデル（web 調査のみ）:
+
+- **YOLO-NAS**: 重みは Deci 独自の非商用ライセンス（本番利用不可）。Deci の NVIDIA 買収（2024-04）以降 super-gradients は保守停止 → **検討対象外**。YOLO 系は closed-set（学習クラスのみ）で、我々は検出ラベルを捨てているので語彙面の利点もない
+- **RF-DETR**: Nano 30.5M / AP48.4 のまま（Apache 2.0）。iOS WASM 圏外の判定は不変
+- **YOLO26-N / YOLOE-26**: AGPL-3.0 のまま
+- **ECDet (EdgeCrafter)**: nano は依然なし（S/M/L/X）。**変化点: 公式リポジトリに `export/export_raw_onnx.py` が入った**（2026-07 時点では無かった）。試行 #6 で S 帯が iOS に載ると分かれば ECDet-S（10M / AP51.7）が DEIMv2-S（AP50.9）の次の候補
+- **iOS WebGPU**: onnxruntime #26827 / #27584 に修正の形跡なし → WASM 単スレ維持
+
+**結論: モデルは DEIMv2-N 維持。** 代わりにモデル以外のボトルネック（低 fps + 動きモデル無しトラッカー）に手を入れた:
+
+- **推論を Web Worker 化**（`src/detector.worker.ts`）。これまでは iOS で 150–300ms の推論中にメインスレッドの rAF が止まっていた。フレームは `createImageBitmap` → transfer、前処理は OffscreenCanvas。onnxruntime-web が worker 側に移り main バンドルは 557kB → 485kB
+- **トラッカーを ByteTrack 風に**（`src/localTracker.ts`）:
+  - alpha-beta（固定ゲイン Kalman）で中心速度を推定する
+  - 検出は**撮影時刻**で登録し、rAF ごとに現在時刻へ外挿して描画する（推論レイテンシ分の枠遅れも補正）
+  - 2 段マッチ: score ≥ 0.25 で照合し、0.12–0.25 は既存トラックの延命のみに使う（`LOW_SCORE_FLOOR`）
+  - 未マッチでも 900ms は表示を続け、3 秒は ID を保持して再捕捉する（旧: 1.5 秒）
+  - シミュレーション（666ms 間隔、等速 0.05px/ms）で、描画位置の平均誤差は約 3.5px（旧方式は最後の検出を表示するだけなので平均約 17px 遅れ + 推論レイテンシ分）。BETA 0.5 は 5.3px で悪化したので 0.3 を採用
+- `?debug=1` の HUD に model / 実効 fps / 推論 ms（EMA）を追加 → 試行 #6 の実機計測にそのまま使える
+- Mac Chrome（バックグラウンドタブ）で、worker 経由の推論が COCO val 画像で動作することを確認（猫 2 / リモコン検出、164–206ms。バックグラウンドタブの throttle で試行 #5 の 27ms より遅い可能性あり、前面タブでの再計測が必要）
+
+次の手:
+
+1. iPhone で `?debug=1` と `?debug=1&model=s` を各数分回し、試行 #6 の TBD（ロード可否 / クラッシュ / fps / 枠の質）を埋める
+2. S が載るなら ECDet-S を `export_raw_onnx.py` で ONNX 化し、I/O を合わせて試行 #7 とする
+3. 中長期: Objects365 / LVIS を 1 クラスに統合し、自社撮影画像を加えて DEIMv2-N を class-agnostic に fine-tune する（COCO 外の品目の取りこぼし対策）
+
 ## 候補リスト (試行待ち)
 
 優先度順:
