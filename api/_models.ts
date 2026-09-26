@@ -53,7 +53,9 @@ export type ModelSpec = {
 
 // --- 台帳からの写し ---------------------------------------------------------
 //
-// 詳細化（切り抜き画像 → 構造化属性）。2026-08-15 に gemini-3.5-flash から移行した。
+// 詳細化（切り抜き画像 → 構造化属性）。2026-08-15 に gemini-3.5-flash → 3.7-flash、
+// 2026-09-26 に 3.7-flash → 3.8-flash（GA）へ移行した。3.6 / 3.7 / 3.8 Flash は単価が同じ。
+// ⚠ 3.8 への移行時は実測していない。下の数字はすべて 3.7 以前のもの。
 // 3.6 と 3.7 は単価が同じ（Flash 系全体の期間限定価格で、2027-01-01 に両方
 // $1.50/$7.50 へ戻る）。**3.7 に移ったから安くなったのではない。**
 //
@@ -62,7 +64,7 @@ export type ModelSpec = {
 //   3.7-flash 未指定  in6439 out411 think762   $0.0092  lat 5.4s
 //   3.7-flash low     in6439 out416 think0     $0.0064  lat 4.2s ← 採用
 // 3条件とも5枚すべて同定に成功し、品目名の粒度も同等だった。
-const REFINE = process.env.GEMINI_MODEL || 'gemini-3.7-flash'; // role: image-detect
+const REFINE = process.env.GEMINI_MODEL || 'gemini-3.8-flash'; // role: image-detect
 
 // 503 UNAVAILABLE のときだけ使う退避先。**同格の GA モデル1本だけ**を置く。
 // flash-lite 系を鎖に入れると、行が欠けた出力が静かに下流へ流れ、単価が安いので
@@ -70,9 +72,10 @@ const REFINE = process.env.GEMINI_MODEL || 'gemini-3.7-flash'; // role: image-de
 const REFINE_FALLBACK =
   process.env.GEMINI_FALLBACK_MODEL || 'gemini-3.6-flash'; // role: gemini-fallback
 
-// 音声トークモード。**3.7 系には Live API が無いので寄せられない。**
-// 未追随ではなく「音声は統一方針の対象外」という整理（規約7）。
-const LIVE = process.env.GEMINI_LIVE_MODEL || 'gemini-3.1-flash-live-preview'; // role: voice-realtime
+// 音声トークモード。2026-09-26 に gemini-3.1-flash-live-preview → gemini-3.8-live（GA）
+// へ移行した。単価は 3.1 と同額（per 分）。音声は「統一方針の対象外」の整理のまま（規約7）。
+// ⚠ 移行時に実機での会話品質・ツール呼び出しの挙動は実測していない。
+const LIVE = process.env.GEMINI_LIVE_MODEL || 'gemini-3.8-live'; // role: voice-realtime
 
 // Live の接続に失敗したときだけ使う。ephemeral token はモデル単位でロックされるので、
 // live-token.ts はこのモデル用のトークンをもう1枚発行し、クライアントが順に試す。
@@ -84,11 +87,11 @@ const LIVE_FALLBACK =
 /**
  * 詳細化の思考深度。
  *
- * 3.7 は思考トークンを出力として課金するので、未指定のままだと単価半減の効果を
+ * 3.7 / 3.8 は思考トークンを出力として課金するので、未指定のままだと単価半減の効果を
  * 思考トークンが食う（上の実測で課金出力が 416 → 1,173 tok）。
  * `GEMINI_THINKING_LEVEL=auto` で未指定に戻せる。
  *
- * ⚠ 3.7 は `minimal` を受け付けない（400 INVALID_ARGUMENT）。low が下限。
+ * ⚠ 3.7 / 3.8 は `minimal` を受け付けない（400 INVALID_ARGUMENT）。low が下限。
  */
 const REFINE_THINKING: ThinkingLevel | null = (() => {
   const v = (process.env.GEMINI_THINKING_LEVEL || 'low').toLowerCase();

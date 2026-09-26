@@ -28,10 +28,10 @@ npm install
 
 | 変数 | 既定値 | 用途 |
 |---|---|---|
-| `GEMINI_MODEL` | `gemini-3.7-flash` | 停止後の詳細化 (`/api/refine-items`) |
+| `GEMINI_MODEL` | `gemini-3.8-flash` | 停止後の詳細化 (`/api/refine-items`) |
 | `GEMINI_FALLBACK_MODEL` | `gemini-3.6-flash` | 上記が 503 のときの退避先（同世代・同単価） |
 | `GEMINI_THINKING_LEVEL` | `low` | 思考深度。`auto` で未指定（モデル任せ）。**思考トークンは出力として課金される** |
-| `GEMINI_LIVE_MODEL` | `gemini-3.1-flash-live-preview` | 音声トークモード (`/api/live-token`) |
+| `GEMINI_LIVE_MODEL` | `gemini-3.8-live` | 音声トークモード (`/api/live-token`) |
 | `GEMINI_LIVE_FALLBACK_MODEL` | `gemini-2.5-flash-native-audio-preview-12-2025` | Live の接続失敗時 |
 
 ### ローカル実行
@@ -100,5 +100,5 @@ src/
   クライアントが順に試す
 - 音声で追加された物体は **Live に最後に送ったフレーム**を保持しておき、`refine-items` が返す
   `box_2d` で切り抜いてサムネイルにする（切り抜き判断は Live ではなく refine 側の責務）
-- `gemini-3.7-flash` は Live API 非対応（native audio を持たない）ため、トークモードだけは
-  3.1 Live 系に据え置いている
+- トークモードは Live API 専用の `gemini-3.8-live`（GA）を使う。詳細化用の `gemini-3.8-flash` は
+  Live API 非対応なので、別モデルになる。2026-09-26 に `gemini-3.1-flash-live-preview` から移行した
